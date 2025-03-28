@@ -27,6 +27,15 @@ class ThreadManagerBuilder[T](lambda: T => Unit) {
     this
   }
 
+  /** if set the threads stop if the job queue runs empty
+   *
+   * @return the current builder
+   */
+  def stopOnEmpty() : ThreadManagerBuilder[T] = {
+    threadManager.dieOnEmpty()
+    this
+  }
+
   def addJob(job: T): ThreadManagerBuilder[T] = {
     threadManager.addJob(job)
     this
