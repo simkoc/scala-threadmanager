@@ -11,6 +11,13 @@ import scala.collection.mutable.ListBuffer
   */
 class ThreadManager[T] extends LogSupport {
 
+  private var shouldDieOnEmpty = false
+
+  protected[threadmanager] def dieOnEmpty() : ThreadManager[T] = {
+    shouldDieOnEmpty = true
+    this
+  }
+
   type OnErrorT = (Option[T], Throwable) => Option[(Option[T], Throwable)]
 
   this.logger.setLogLevel(ERROR)
@@ -61,7 +68,7 @@ class ThreadManager[T] extends LogSupport {
 
   private var threadsShallBeRunning = true
   private def getKeepRunning: Boolean = synchronized {
-    threadsShallBeRunning
+    threadsShallBeRunning && (this.remainingJobs() > 0 || !shouldDieOnEmpty)
   }
 
   private var threadCount: Int = Runtime.getRuntime.availableProcessors
@@ -91,7 +98,7 @@ class ThreadManager[T] extends LogSupport {
   private val threadsJob: collection.mutable.Map[Int, Option[T]] =
     collection.mutable.Map()
 
-  private def areThreadsAlive(): Boolean = {
+  private def areThreadsAlive(): Boolean = synchronized {
     threads.values.exists(_.isAlive)
   }
 
@@ -187,7 +194,7 @@ class ThreadManager[T] extends LogSupport {
     *
     * @return
     */
-  def isAlive: Boolean = {
+  def isAlive: Boolean = synchronized {
     this.areThreadsAlive()
   }
 
