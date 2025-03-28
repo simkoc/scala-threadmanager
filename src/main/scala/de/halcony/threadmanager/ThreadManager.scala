@@ -221,4 +221,19 @@ class ThreadManager[T] extends LogSupport {
     this.jobQueue.isEmpty // check if there are still jobs remaining
   }
 
+  def waitFor() : Boolean = {
+    try {
+      while (areThreadsAlive()) { // while there are still threads alive
+        this.synchronized {
+            this.wait() // wait
+        }
+      }
+      true
+    } catch {
+      case x : Throwable =>
+        error(x)
+        false
+    }
+  }
+
 }
