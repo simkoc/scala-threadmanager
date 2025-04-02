@@ -61,14 +61,14 @@ class ThreadManagerTest extends AnyWordSpec with Matchers{
             None
         }
         .addJobs(List(2500,10000,10000,10000,10000)).start()
-      Thread.sleep(1000) // wind up time due to parallelized starting
+      //Thread.sleep(1000) // wind up time due to parallelized starting
       assert(!manager.waitFor(2000))
       assert(manager.isAlive)
       if(!manager.stop(1000)) {
         manager.destroyAndWait()
       }
       assert(!manager.isAlive)
-      assertResult(3)(manager.remainingJobs())
+      assertResult(4)(manager.remainingJobs())
     }
   }
 

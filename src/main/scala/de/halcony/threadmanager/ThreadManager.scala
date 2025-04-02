@@ -128,13 +128,16 @@ class ThreadManager[T] extends LogSupport {
     (0 until threadCount).foreach { id =>
       threads.addOne(id -> new Thread(() => {
         parentManager.livingThreads.incrementAndGet()
+        parentManager.synchronized {
+          parentManager.notifyAll()
+        }
         val myId = id
         parentManager.info(s"thread $myId has started")
         try {
           while (parentManager.getKeepRunning) { // as long as the threads are supposed to run
             parentManager.synchronized { // sync with the parent
               if (jobQueue.isEmpty) { // check if the job queue has an element
-                this.wait() // if not wait for any notification on parent
+                parentManager.wait() // if not wait for any notification on parent
                 None // and say there was no job
               } else {
                 Some(jobQueue.dequeue()) // if there is a job deque and provide
@@ -143,8 +146,8 @@ class ThreadManager[T] extends LogSupport {
               case Some(job) =>
                 try { // if there was a job
                   parentManager.info(s"thread $myId starts processing job $job")
-                  this.setThreadJob(myId, Some(job)) // set the job the thread is working on
-                  this.lambda.get.apply(job) // run the process lambda
+                  parentManager.setThreadJob(myId, Some(job)) // set the job the thread is working on
+                  parentManager.lambda.get.apply(job) // run the process lambda
                 } catch {
                   case int : InterruptedException => throw int
                   // in case of any issue catch and log
@@ -180,7 +183,10 @@ class ThreadManager[T] extends LogSupport {
     * @return the current ThreadManager
     */
   def start(): ThreadManager[T] = {
-    this.threads.values.foreach(_.start())
+    this.synchronized {
+      this.threads.values.foreach(_.start())
+      this.wait()
+    }
     this
   }
 
