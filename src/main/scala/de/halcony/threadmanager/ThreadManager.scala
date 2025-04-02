@@ -98,8 +98,12 @@ class ThreadManager[T] extends LogSupport {
   private val threadsJob: collection.mutable.Map[Int, Option[T]] =
     collection.mutable.Map()
 
-  private def areThreadsAlive(): Boolean = synchronized {
-    threads.values.exists(_.isAlive)
+  private def areThreadsAlive(): Boolean = {
+    //todo this is not really elegant, maybe rather use a semaphore to count living threads?
+    this.wait(100) // give any thread marginal time for cleanup - otherwise RC possible
+    synchronized {
+      threads.values.exists(_.isAlive)
+    }
   }
 
   private def setThreadJob(id: Int, job: Option[T]) = synchronized {
