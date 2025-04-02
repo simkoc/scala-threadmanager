@@ -100,7 +100,7 @@ class ThreadManager[T] extends LogSupport {
 
   private def areThreadsAlive(): Boolean = {
     //todo this is not really elegant, maybe rather use a semaphore to count living threads?
-    this.wait(100) // give any thread marginal time for cleanup - otherwise RC possible
+    Thread.sleep(100) // give any thread marginal time for cleanup - otherwise RC possible
     synchronized {
       threads.values.exists(_.isAlive)
     }
