@@ -110,8 +110,8 @@ class ThreadManager[T] extends LogSupport {
   private val threadsJob: collection.mutable.Map[Int, Option[T]] =
     collection.mutable.Map()
 
-  private def areThreadsAlive(): Boolean = {
-    livingThreads.get() == 0
+  private def areThreadsAlive(): Boolean = synchronized {
+    livingThreads.get() > 0
   }
 
   private def setThreadJob(id: Int, job: Option[T]) = synchronized {
@@ -146,11 +146,13 @@ class ThreadManager[T] extends LogSupport {
                   this.setThreadJob(myId, Some(job)) // set the job the thread is working on
                   this.lambda.get.apply(job) // run the process lambda
                 } catch {
+                  case int : InterruptedException => throw int
                   // in case of any issue catch and log
                   case thr: Throwable =>
                     parentManager.encounteredError(Some(job), thr)
                 } finally {
                   // and set the current job to none
+                  parentManager.info(s"thread $myId finished processing job $job")
                   setThreadJob(myId, None)
                   parentManager.synchronized {
                     parentManager.notifyAll()
@@ -189,11 +191,11 @@ class ThreadManager[T] extends LogSupport {
     */
   def stop(gracePeriodMs: Long = 100): Boolean = {
     synchronized {
-      threadsShallBeRunning = false // set shall be running to false
+      this.setThreadsShallBeRunning(false) // set shall be running to false
       this.notifyAll() // notify all threads in case they are waiting for input
     }
     val start = System.currentTimeMillis() // get the current time
-    this.threads.values
+    !this.threads.values
       .map { // go through all threads
         thread =>
           val delta = List((start + gracePeriodMs) - System.currentTimeMillis(),
@@ -218,6 +220,27 @@ class ThreadManager[T] extends LogSupport {
   def destroy(): Unit = {
     this.threads.values.foreach { thread =>
       thread.interrupt()
+    }
+  }
+
+  def destroy(waitMs : Long) : Unit = {
+    val start = System.currentTimeMillis()
+    destroy()
+    threads.values.foreach {
+      thread =>
+        val delta = (start + waitMs) - System.currentTimeMillis()
+        if(delta > 0) {
+          thread.join(delta)
+        } else {
+          thread.join(1)
+        }
+    }
+  }
+
+  def destroyAndWait(): Unit = {
+    destroy()
+    threads.values.foreach {
+      _.join()
     }
   }
 
