@@ -68,8 +68,18 @@ class ThreadManager[T] extends LogSupport {
   }
 
   private var threadsShallBeRunning = true
+  private def setThreadsShallBeRunning(value : Boolean) : Boolean = synchronized {
+    //debug(s"setting threadsShallbeRunning to ${value}")
+    this.threadsShallBeRunning = value
+    value
+  }
+  private def getThreadsShallBeRuning : Boolean = synchronized {
+    this.threadsShallBeRunning
+  }
   private def getKeepRunning: Boolean = synchronized {
-    threadsShallBeRunning && (this.remainingJobs() > 0 || !shouldDieOnEmpty)
+    val ret = this.getThreadsShallBeRuning && (this.remainingJobs() > 0 || !shouldDieOnEmpty)
+    //debug(s"threads should keep running: $ret ($getThreadsShallBeRuning && ${this.remainingJobs() > 0 || !shouldDieOnEmpty})")
+    ret
   }
 
   private var threadCount: Int = Runtime.getRuntime.availableProcessors
