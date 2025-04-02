@@ -3,6 +3,7 @@ package de.halcony.threadmanager
 import wvlet.log.LogLevel.ERROR
 import wvlet.log.{LogLevel, LogSupport}
 
+import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable.ListBuffer
 
 /** Utility class to manage multiple threads processing jobs created via the ThreadManagerBuilder
@@ -93,17 +94,14 @@ class ThreadManager[T] extends LogSupport {
     this.jobQueue.length
   }
 
+  private val livingThreads : AtomicInteger = new AtomicInteger()
   private val threads: collection.mutable.Map[Int, Thread] =
     collection.mutable.Map()
   private val threadsJob: collection.mutable.Map[Int, Option[T]] =
     collection.mutable.Map()
 
   private def areThreadsAlive(): Boolean = {
-    //todo this is not really elegant, maybe rather use a semaphore to count living threads?
-    Thread.sleep(100) // give any thread marginal time for cleanup - otherwise RC possible
-    synchronized {
-      threads.values.exists(_.isAlive)
-    }
+    livingThreads.get() == 0
   }
 
   private def setThreadJob(id: Int, job: Option[T]) = synchronized {
@@ -119,6 +117,7 @@ class ThreadManager[T] extends LogSupport {
     val parentManager = this
     (0 until threadCount).foreach { id =>
       threads.addOne(id -> new Thread(() => {
+        parentManager.livingThreads.incrementAndGet()
         val myId = id
         parentManager.info(s"thread $myId has started")
         try {
@@ -153,6 +152,7 @@ class ThreadManager[T] extends LogSupport {
         } catch {
           case thr: Throwable => parentManager.encounteredError(None, thr)
         } finally {
+          parentManager.livingThreads.decrementAndGet()
           parentManager.info(s"thread $myId is done")
           parentManager.synchronized {
             parentManager.notifyAll()
