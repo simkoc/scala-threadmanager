@@ -3,10 +3,11 @@ package de.halcony.threadmanager
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import wvlet.log.LogLevel.DEBUG
+import wvlet.log.LogSupport
 
 import java.util.concurrent.atomic.AtomicInteger
 
-class ThreadManagerTest extends AnyWordSpec with Matchers{
+class ThreadManagerTest extends AnyWordSpec with Matchers with LogSupport {
 
   "processing using the thread manager" should {
       "process the queue" in {
@@ -60,8 +61,7 @@ class ThreadManagerTest extends AnyWordSpec with Matchers{
             counter.incrementAndGet()
             None
         }
-        .addJobs(List(2500,10000,10000,10000,10000)).start()
-      //Thread.sleep(1000) // wind up time due to parallelized starting
+        .addJobs(List(10000,10000,10000,10000,10000)).start()
       assert(!manager.waitFor(2000))
       assert(manager.isAlive)
       if(!manager.stop(1000)) {
@@ -69,6 +69,25 @@ class ThreadManagerTest extends AnyWordSpec with Matchers{
       }
       assert(!manager.isAlive)
       assertResult(4)(manager.remainingJobs())
+    }
+    "pause the threads and wait" in {
+      val manager = new ThreadManagerBuilder[Int](
+        job => Thread.sleep(job)
+      ).threadCount(2)
+        .setLogLevel(DEBUG)
+        .stopOnEmpty()
+        .addJobs(List(2000,2000,2000)).start()
+      info("started + pausing")
+      manager.pauseThreads()
+      info("threads paused")
+      if(manager.remainingJobs() == 2) {
+        assertResult(2)(manager.remainingJobs())
+      } else {
+        assertResult(1)(manager.remainingJobs())
+      }
+      manager.unpauseThreads()
+      manager.waitFor()
+      assertResult(0)(manager.remainingJobs())
     }
   }
 

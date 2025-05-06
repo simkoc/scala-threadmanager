@@ -2,6 +2,8 @@ package de.halcony.threadmanager
 
 import wvlet.log.LogLevel
 
+import scala.annotation.nowarn
+
 /** Utility to build a thread manager that uses the provided lambda to process incoming jobs
   *
   * @param lambda the lambda to process a given job
@@ -28,19 +30,19 @@ class ThreadManagerBuilder[T](lambda: T => Unit) {
   }
 
   /** if set the threads stop if the job queue runs empty
-   *
-   * @return the current builder
-   */
-  def stopOnEmpty() : ThreadManagerBuilder[T] = {
+    *
+    * @return the current builder
+    */
+  def stopOnEmpty(): ThreadManagerBuilder[T] = {
     threadManager.dieOnEmpty()
     this
   }
-
+  @nowarn //this is an API call
   def addJob(job: T): ThreadManagerBuilder[T] = {
     threadManager.addJob(job)
     this
   }
-
+  @nowarn //this is an API call
   def addJobs(jobs: Seq[T]): ThreadManagerBuilder[T] = {
     threadManager.addJobs(jobs)
     this
