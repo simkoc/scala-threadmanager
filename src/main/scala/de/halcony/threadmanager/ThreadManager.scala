@@ -3,7 +3,7 @@ package de.halcony.threadmanager
 import wvlet.log.LogLevel.ERROR
 import wvlet.log.{LogLevel, LogSupport}
 
-import java.util.concurrent.atomic.AtomicInteger
+import scala.annotation.nowarn
 import scala.collection.mutable.ListBuffer
 
 /** Utility class to manage multiple threads processing jobs created via the ThreadManagerBuilder
@@ -12,11 +12,20 @@ import scala.collection.mutable.ListBuffer
   */
 class ThreadManager[T] extends LogSupport {
 
-  private var shouldDieOnEmpty = false
+  private var threadCount: Int = Runtime.getRuntime.availableProcessors
+  protected[threadmanager] def setThreadCount(count: Int): ThreadManager[T] =
+    synchronized {
+      threadCount = count
+      this
+    }
 
-  protected[threadmanager] def dieOnEmpty() : ThreadManager[T] = {
+  private var shouldDieOnEmpty = false
+  protected[threadmanager] def dieOnEmpty(): ThreadManager[T] = {
     shouldDieOnEmpty = true
     this
+  }
+  private[threadmanager] def getDieOnEmpty: Boolean = synchronized {
+    this.shouldDieOnEmpty
   }
 
   type OnErrorT = (Option[T], Throwable) => Option[(Option[T], Throwable)]
@@ -31,33 +40,34 @@ class ThreadManager[T] extends LogSupport {
 
   private var lambda: Option[T => Unit] = None
 
-  protected[threadmanager] def setLambda(lambda: T => Unit) = {
+  protected[threadmanager] def setLambda(
+      lambda: T => Unit): ThreadManager[T] = {
     this.lambda = Some(lambda)
+    this
   }
+  private[threadmanager] def getJobLambda: T => Unit = this.lambda.get
 
   private val errors: ListBuffer[(Option[T], Throwable)] = new ListBuffer()
-
   def getErrors: Seq[(Option[T], Throwable)] = synchronized {
     errors.toList
   }
-
+  @nowarn //this is an API call
   def resetErrors(): Seq[(Option[T], Throwable)] = synchronized {
     val ret: Seq[(Option[T], Throwable)] = getErrors
     errors.clear()
     ret
   }
-
   private var onError: OnErrorT = (input, thr) => {
     this.error(s"unhandled error while processing $input", thr)
     Some((input, thr))
   }
-
-  protected[threadmanager] def setOnError(onError: OnErrorT): ThreadManager[T] = {
+  protected[threadmanager] def setOnError(
+      onError: OnErrorT): ThreadManager[T] = {
     this.onError = onError
     this
   }
-
-  private def encounteredError(input: Option[T], thr: Throwable): Unit = {
+  private[threadmanager] def encounteredError(input: Option[T],
+                                              thr: Throwable): Unit = {
     onError(input, thr) match {
       case Some(err) =>
         synchronized {
@@ -67,26 +77,19 @@ class ThreadManager[T] extends LogSupport {
     }
   }
 
-  private var threadsShallBeRunning = true
-  private def setThreadsShallBeRunning(value : Boolean) : Boolean = synchronized {
-    //debug(s"setting threadsShallbeRunning to ${value}")
-    this.threadsShallBeRunning = value
-    value
+  private var threadsActive = true
+  private[threadmanager] def getThreadsActive: Boolean = synchronized {
+    this.threadsActive
   }
-  private def getThreadsShallBeRuning : Boolean = synchronized {
-    this.threadsShallBeRunning
-  }
-  private def getKeepRunning: Boolean = synchronized {
-    val ret = this.getThreadsShallBeRuning && (this.remainingJobs() > 0 || !shouldDieOnEmpty)
-    //debug(s"threads should keep running: $ret ($getThreadsShallBeRuning && ${this.remainingJobs() > 0 || !shouldDieOnEmpty})")
-    ret
-  }
-
-  private var threadCount: Int = Runtime.getRuntime.availableProcessors
-
-  protected[threadmanager] def setThreadCount(count: Int): ThreadManager[T] =
+  private[threadmanager] def setThreadsInactive(): ThreadManager[T] =
     synchronized {
-      threadCount = count
+      this.threadsActive = false
+      this
+    }
+  @nowarn //this is an API call
+  private[threadmanager] def setThreadsActive(): ThreadManager[T] =
+    synchronized {
+      this.threadsActive = true
       this
     }
 
@@ -99,81 +102,77 @@ class ThreadManager[T] extends LogSupport {
     jobQueue.addAll(jobs)
     this.notifyAll()
   }
-
   def remainingJobs(): Int = synchronized {
     this.jobQueue.length
   }
 
-  private val livingThreads : AtomicInteger = new AtomicInteger()
-  private val threads: collection.mutable.Map[Int, Thread] =
-    collection.mutable.Map()
-  private val threadsJob: collection.mutable.Map[Int, Option[T]] =
-    collection.mutable.Map()
-
+  private val threads: collection.mutable.Set[ThreadManagerThread[T]] =
+    collection.mutable.Set()
   private def areThreadsAlive(): Boolean = synchronized {
-    livingThreads.get() > 0
+    threads.exists(!_.getThreadState.isInstanceOf[DoneThreadState])
   }
-
-  private def setThreadJob(id: Int, job: Option[T]) = synchronized {
-    threadsJob.addOne(id, job)
-  }
-
+  @nowarn //this is an API call
   def getThreadJobs: Map[Int, Option[T]] = synchronized {
-    this.threadsJob.toMap
+    threads.map { thread =>
+      thread.getThreadIdentifier -> (thread.getThreadState match {
+        case Working(job: T) => Some(job)
+        case _               => None
+      })
+    }.toMap
   }
 
-  //todo: the mutexes could be optimized to be split between manager and job queue
+
+  private var paused: Boolean = false
+  @nowarn //this is an API call
+  def pauseThreads(waitOnPause: Boolean = true): Unit = synchronized {
+    debug("pausing threads")
+    this.paused = true
+    if (waitOnPause) {
+      while (threads.exists(!_.getThreadState.isInstanceOf[Stopped]) && this
+               .threadsArePaused()) {
+        this.wait()
+        // wait for notification by the threads
+      }
+    }
+  }
+
+  @nowarn //this is an API call
+  def unpauseThreads(): Unit = synchronized {
+    debug("unpausing threads")
+    this.paused = false
+    this.notifyAll()
+  }
+
+  private[threadmanager] def threadsArePaused(): Boolean = synchronized {
+    this.paused
+  }
+
+  /**
+    *
+    * @return
+    */
+  private[threadmanager] def getJobQueue = this.jobQueue
+
+  @nowarn //this is an API call
+  private[threadmanager] def threadDebug(id: Int, msg: String): Unit = {
+    debug(s"[thread-$id] " + msg)
+  }
+  @nowarn //this is an API call
+  private[threadmanager] def threadInfo(id: Int, msg: String): Unit = {
+    info(s"[thread-$id] " + msg)
+  }
+  @nowarn //this is an API call
+  private[threadmanager] def threadWarn(id: Int, msg: String): Unit = {
+    warn(s"[thread-$id] " + msg)
+  }
+  @nowarn //this is an API call
+  private[threadmanager] def threadError(id: Int, msg: String): Unit = {
+    error(s"[thread-$id] " + msg)
+  }
+
   protected[threadmanager] def createPool(): ThreadManager[T] = {
-    val parentManager = this
     (0 until threadCount).foreach { id =>
-      threads.addOne(id -> new Thread(() => {
-        parentManager.livingThreads.incrementAndGet()
-        parentManager.synchronized {
-          parentManager.notifyAll()
-        }
-        val myId = id
-        parentManager.info(s"thread $myId has started")
-        try {
-          while (parentManager.getKeepRunning) { // as long as the threads are supposed to run
-            parentManager.synchronized { // sync with the parent
-              if (jobQueue.isEmpty) { // check if the job queue has an element
-                parentManager.wait() // if not wait for any notification on parent
-                None // and say there was no job
-              } else {
-                Some(jobQueue.dequeue()) // if there is a job deque and provide
-              }
-            } match {
-              case Some(job) =>
-                try { // if there was a job
-                  parentManager.info(s"thread $myId starts processing job $job")
-                  parentManager.setThreadJob(myId, Some(job)) // set the job the thread is working on
-                  parentManager.lambda.get.apply(job) // run the process lambda
-                } catch {
-                  case int : InterruptedException => throw int
-                  // in case of any issue catch and log
-                  case thr: Throwable =>
-                    parentManager.encounteredError(Some(job), thr)
-                } finally {
-                  // and set the current job to none
-                  parentManager.info(s"thread $myId finished processing job $job")
-                  setThreadJob(myId, None)
-                  parentManager.synchronized {
-                    parentManager.notifyAll()
-                  }
-                } // rinse and repeat
-              case None => // if there wasn't a job, go to the start of the loop
-            }
-          }
-        } catch {
-          case thr: Throwable => parentManager.encounteredError(None, thr)
-        } finally {
-          parentManager.livingThreads.decrementAndGet()
-          parentManager.info(s"thread $myId is done")
-          parentManager.synchronized {
-            parentManager.notifyAll()
-          }
-        }
-      }))
+      threads.addOne(new ThreadManagerThread[T](id, this))
     }
     this
   }
@@ -184,8 +183,7 @@ class ThreadManager[T] extends LogSupport {
     */
   def start(): ThreadManager[T] = {
     this.synchronized {
-      this.threads.values.foreach(_.start())
-      this.wait()
+      this.threads.foreach(_.start())
     }
     this
   }
@@ -197,11 +195,11 @@ class ThreadManager[T] extends LogSupport {
     */
   def stop(gracePeriodMs: Long = 100): Boolean = {
     synchronized {
-      this.setThreadsShallBeRunning(false) // set shall be running to false
+      this.setThreadsInactive() // set shall be running to false
       this.notifyAll() // notify all threads in case they are waiting for input
     }
     val start = System.currentTimeMillis() // get the current time
-    !this.threads.values
+    !this.threads
       .map { // go through all threads
         thread =>
           val delta = List((start + gracePeriodMs) - System.currentTimeMillis(),
@@ -224,28 +222,28 @@ class ThreadManager[T] extends LogSupport {
     *
     */
   def destroy(): Unit = {
-    this.threads.values.foreach { thread =>
+    this.threads.foreach { thread =>
       thread.interrupt()
     }
   }
 
-  def destroy(waitMs : Long) : Unit = {
+  @nowarn //this is an API call
+  def destroy(waitMs: Long): Unit = {
     val start = System.currentTimeMillis()
     destroy()
-    threads.values.foreach {
-      thread =>
-        val delta = (start + waitMs) - System.currentTimeMillis()
-        if(delta > 0) {
-          thread.join(delta)
-        } else {
-          thread.join(1)
-        }
+    threads.foreach { thread =>
+      val delta = (start + waitMs) - System.currentTimeMillis()
+      if (delta > 0) {
+        thread.join(delta)
+      } else {
+        thread.join(1)
+      }
     }
   }
 
   def destroyAndWait(): Unit = {
     destroy()
-    threads.values.foreach {
+    threads.foreach {
       _.join()
     }
   }
@@ -258,7 +256,7 @@ class ThreadManager[T] extends LogSupport {
     val start = System.currentTimeMillis() // get the current time
     var delta = (start + timeoutMs) - System
       .currentTimeMillis() // calculate the remaining time
-    while (areThreadsAlive() && delta > 0) { // while there are still threads alive and time to wait
+    while (!threadsArePaused() && areThreadsAlive() && delta > 0) { // while there are still threads alive and time to wait
       delta = List((start + timeoutMs) - System
                      .currentTimeMillis(),
                    0).max // calculate the remaining time
@@ -271,16 +269,16 @@ class ThreadManager[T] extends LogSupport {
     this.jobQueue.isEmpty // check if there are still jobs remaining
   }
 
-  def waitFor() : Boolean = {
+  def waitFor(): Boolean = {
     try {
-      while (areThreadsAlive()) { // while there are still threads alive
+      while (!threadsArePaused() && areThreadsAlive()) { // while there are still threads alive
         this.synchronized {
-            this.wait() // wait
+          this.wait() // wait
         }
       }
       true
     } catch {
-      case x : Throwable =>
+      case x: Throwable =>
         error(x)
         false
     }
